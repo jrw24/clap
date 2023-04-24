@@ -1,0 +1,7 @@
+---
+time: '02:00:00'
+ntasks: '8'
+nodes: '1'
+mem_per_cpu: '6G'
+output: '{logDir}/run_clap_jar_{samp}.out'
+error: '{logDir}/run_clap_jar_{samp}.err'

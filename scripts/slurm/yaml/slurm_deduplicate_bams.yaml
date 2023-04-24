@@ -1,0 +1,7 @@
+---
+time: '01:00:00'
+ntasks: '8'
+nodes: '1'
+mem_per_cpu: '6G'
+output: '{logDir}/deduplicate_bam_{samp}.out'
+error: '{logDir}/deduplicate_bam_{samp}.err'

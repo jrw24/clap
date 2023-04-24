@@ -1,0 +1,7 @@
+---
+time: '04:00:00'
+ntasks: '22'
+nodes: '1'
+mem_per_cpu: '6G'
+output: '{logDir}/numpy_genome_arrays_{samp}.out'
+error: '{logDir}/numpy_genome_arrays_{samp}.err'

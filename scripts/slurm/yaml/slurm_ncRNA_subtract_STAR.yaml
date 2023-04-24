@@ -1,0 +1,7 @@
+---
+time: '00:30:00'
+ntasks: '8'
+nodes: '1'
+mem_per_cpu: '6G'
+output: '{logDir}/ncRNA_subtract_STAR_{samp}.out'
+error: '{logDir}/ncRNA_subtract_STAR_{samp}.err'

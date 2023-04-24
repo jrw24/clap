@@ -1,0 +1,7 @@
+---
+time: '02:00:00'
+ntasks: '4'
+nodes: '1'
+mem: '30G'
+output: '{logDir}/calculate_clap_enrichment_{samp}.out'
+error: '{logDir}/calculate_clap_enrichment_{samp}.err'

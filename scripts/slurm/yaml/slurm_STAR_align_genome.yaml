@@ -1,0 +1,7 @@
+---
+time: '01:00:00'
+ntasks: '16'
+nodes: '1'
+mem_per_cpu: '4G'
+output: '{logDir}/STAR_align_genome_{samp}.out'
+error: '{logDir}/STAR_align_genome_{samp}.err'
