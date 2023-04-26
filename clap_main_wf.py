@@ -234,32 +234,32 @@ def slurm_single_sample(samp):
 	# commands['calculate_clap_enrichment'] = commands['calculate_clap_enrichment']+calcEnrich_tasks_numb
 	# commands['run_clap_jar'] = commands['run_clap_jar']+clap_jar_tasks_numb
 
-	# ### submit sbatch jobs to scheduler ###
-	# jobID_trim_adapt = trim_adapter_slurm.sbatch(commands['trim_adapter_cmnd']) ## submit the job!
-	# write_slurm_job(samp, 'trim_adapter', trim_adapter_slurm, commands['trim_adapter_cmnd'])
+	### submit sbatch jobs to scheduler ###
+	jobID_trim_adapt = trim_adapter_slurm.sbatch(commands['trim_adapter_cmnd']) ## submit the job!
+	write_slurm_job(samp, 'trim_adapter', trim_adapter_slurm, commands['trim_adapter_cmnd'])
 
-	# ncRNA_subtract_slurm.set_dependency('afterok:%s' % (jobID_trim_adapt))
-	# jobID_ncRNA_subtract = ncRNA_subtract_slurm.sbatch(commands['ncRNA_subtract_cmnd'])
-	# write_slurm_job(samp, 'ncRNA_subtract', ncRNA_subtract_slurm, commands['ncRNA_subtract_cmnd'])
+	ncRNA_subtract_slurm.set_dependency('afterok:%s' % (jobID_trim_adapt))
+	jobID_ncRNA_subtract = ncRNA_subtract_slurm.sbatch(commands['ncRNA_subtract_cmnd'])
+	write_slurm_job(samp, 'ncRNA_subtract', ncRNA_subtract_slurm, commands['ncRNA_subtract_cmnd'])
 	
-	# star_align_genome_slurm.set_dependency('afterok:%s' % (jobID_ncRNA_subtract))
-	# jobID_star_align_genome = star_align_genome_slurm.sbatch(commands['star_align_cmnd'])
-	# write_slurm_job(samp, 'star_align_genome', star_align_genome_slurm, commands['star_align_cmnd'])
+	star_align_genome_slurm.set_dependency('afterok:%s' % (jobID_ncRNA_subtract))
+	jobID_star_align_genome = star_align_genome_slurm.sbatch(commands['star_align_cmnd'])
+	write_slurm_job(samp, 'star_align_genome', star_align_genome_slurm, commands['star_align_cmnd'])
 
-	# dedeuplicate_bams_slurm.set_dependency('afterok:%s' % (jobID_star_align_genome))
-	# jobID_deduplicate_bams = dedeuplicate_bams_slurm.sbatch(commands['deduplicate_bams_cmnd'])
-	# write_slurm_job(samp, 'dedeuplicate_bams', dedeuplicate_bams_slurm, commands['deduplicate_bams_cmnd'])
+	dedeuplicate_bams_slurm.set_dependency('afterok:%s' % (jobID_star_align_genome))
+	jobID_deduplicate_bams = dedeuplicate_bams_slurm.sbatch(commands['deduplicate_bams_cmnd'])
+	write_slurm_job(samp, 'dedeuplicate_bams', dedeuplicate_bams_slurm, commands['deduplicate_bams_cmnd'])
 
-	# split_nascent_bams_slurm.set_dependency('afterok:%s' % (jobID_deduplicate_bams))
-	# jobID_split_nascent = split_nascent_bams_slurm.sbatch(commands['split_nascent_cmnd'])
-	# write_slurm_job(samp, 'split_nascent_bams', split_nascent_bams_slurm, commands['split_nascent_cmnd'])
+	split_nascent_bams_slurm.set_dependency('afterok:%s' % (jobID_deduplicate_bams))
+	jobID_split_nascent = split_nascent_bams_slurm.sbatch(commands['split_nascent_cmnd'])
+	write_slurm_job(samp, 'split_nascent_bams', split_nascent_bams_slurm, commands['split_nascent_cmnd'])
 
-	# numpy_arrays_slurm.set_dependency('afterok:%s' % (jobID_deduplicate_bams))
-	# jobID_numpy_arrays = numpy_arrays_slurm.sbatch(commands['numpy_genome_arrays'])
-	# write_slurm_job(samp, 'numpy_genome_arrays', numpy_arrays_slurm, commands['numpy_genome_arrays'])
+	numpy_arrays_slurm.set_dependency('afterok:%s' % (jobID_deduplicate_bams))
+	jobID_numpy_arrays = numpy_arrays_slurm.sbatch(commands['numpy_genome_arrays'])
+	write_slurm_job(samp, 'numpy_genome_arrays', numpy_arrays_slurm, commands['numpy_genome_arrays'])
 
 	## nascent
-	# numpy_nascent_slurm.set_dependency('afterok:%s' % (jobID_split_nascent))
+	numpy_nascent_slurm.set_dependency('afterok:%s' % (jobID_split_nascent))
 	jobID_numpy_nascent = numpy_nascent_slurm.sbatch(commands['numpy_genome_arrays_nascent'])
 	write_slurm_job(samp, 'numpy_nascent_arrays', numpy_nascent_slurm, commands['numpy_genome_arrays_nascent'])
 
