@@ -76,20 +76,24 @@ def make_out_dirs(rootDir, readProcDir, alignDir, genomeName):
 	"""
 	make output directories if they do not exist
 	"""
+	scratchDir = '/central/scratch/%s/%s/%s' % (os.environ['USER'], rootDir, experiment) 
 	readProcOutDir = f'{rootDir}/{readProcDir}' 
 	alignOutDir = f'{rootDir}/{alignDir}/{genomeName}'
 	starOutDir = f'{alignOutDir}/star'
 	dedupeDir = f'{starOutDir}/dedupe'
+	nascentDir = f'{starOutDir}/nascent'
 	jobDir = f'{rootDir}/jobs'
 	logDir = f'{rootDir}/logs'
 	npArrayDir = f'{rootDir}/npArrayDir'
 	clapEnrichDir = f'{rootDir}/clapEnrichment'
 	outScriptDir = f'{rootDir}/workflow'
 
+	make_dir(scratchDir)
 	make_dir(readProcOutDir)
 	make_dir(alignOutDir)
 	make_dir(starOutDir)
 	make_dir(dedupeDir)
+	make_dir(nascentDir)
 	make_dir(jobDir)
 	make_dir(logDir)
 	make_dir(npArrayDir)
@@ -172,14 +176,16 @@ def slurm_single_sample(samp):
 		{scriptDir}/scripts/python/STAR_align_genome.py --samp {samp} --libset {libset} --threadNumb ' 
 	commands['deduplicate_bams_cmnd'] = f'python \
 		{scriptDir}/scripts/python/deduplicate_bams.py --samp {samp} --libset {libset} --threadNumb ' 
+	commands['split_nascent_cmnd'] = f'python \
+		{scriptDir}/scripts/python/split_nascent_bams.py --samp {samp} --libset {libset} --threadNumb '
 	commands['numpy_genome_arrays'] = f'python \
 		{scriptDir}/scripts/python/numpy_genome_arrays.py --samp {samp} --libset {libset} --threadNumb '
-	commands['calculate_clap_enrichment'] = f'python \
-		{scriptDir}/scripts/python/calculate_clap_enrichment.py --samp {samp} --libset {libset} \
-		--binSize {enrichBinSize} --threadNumb '
-	commands['run_clap_jar'] = f'python \
-		{scriptDir}/scripts/python/run_clap_jar.py --samp {samp} --libset {libset} \
-		--scriptDir {scriptDir} --threadNumb '
+	# commands['calculate_clap_enrichment'] = f'python \
+	# 	{scriptDir}/scripts/python/calculate_clap_enrichment.py --samp {samp} --libset {libset} \
+	# 	--binSize {enrichBinSize} --threadNumb '
+	# commands['run_clap_jar'] = f'python \
+	# 	{scriptDir}/scripts/python/run_clap_jar.py --samp {samp} --libset {libset} \
+	# 	--scriptDir {scriptDir} --threadNumb '
 
 	### define settings for slurm commands ###
 	slurmSetDir = f'{scriptDir}/scripts/slurm/yaml' ## dir with yaml files
@@ -199,54 +205,134 @@ def slurm_single_sample(samp):
 	dedeuplicate_bams_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_deduplicate_bams.yaml')
 	dedupe_tasks_numb = ntasks_lookup(dedeuplicate_bams_slurm)
 
+	split_nascent_bams_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_split_nascent.yaml')
+	nascnet_tasks_numb = ntasks_lookup(split_nascent_bams_slurm)
+
 	numpy_arrays_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_numpy_genome_arrays.yaml')
 	npArray_tasks_numb = ntasks_lookup(numpy_arrays_slurm)
 
-	calc_clap_enrich_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_calc_clap_enrichments.yaml')
-	calcEnrich_tasks_numb = ntasks_lookup(calc_clap_enrich_slurm)
+	numpy_nascent_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_numpy_genome_arrays_nascent.yaml')
+	numpy_mature_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_numpy_genome_arrays_mature.yaml')
 
-	run_clap_jar_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_clapJar.yaml')
-	clap_jar_tasks_numb = ntasks_lookup(run_clap_jar_slurm)
+	# calc_clap_enrich_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_calc_clap_enrichments.yaml')
+	# calcEnrich_tasks_numb = ntasks_lookup(calc_clap_enrich_slurm)
+
+	# run_clap_jar_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_clapJar.yaml')
+	# clap_jar_tasks_numb = ntasks_lookup(run_clap_jar_slurm)
 
 	### modify commands to add thread number ###
 	commands['trim_adapter_cmnd'] = commands['trim_adapter_cmnd']+trim_task_numb
 	commands['ncRNA_subtract_cmnd'] = commands['ncRNA_subtract_cmnd']+ncRNA_task_numb
 	commands['star_align_cmnd'] = commands['star_align_cmnd']+star_task_numb
 	commands['deduplicate_bams_cmnd'] = commands['deduplicate_bams_cmnd']+dedupe_tasks_numb
+	commands['split_nascent_cmnd'] = commands['split_nascent_cmnd']+nascnet_tasks_numb
 	commands['numpy_genome_arrays'] = commands['numpy_genome_arrays']+npArray_tasks_numb
+	commands['numpy_genome_arrays_nascent'] = commands['numpy_genome_arrays']+' --split nascent'
+	commands['numpy_genome_arrays_mature'] = commands['numpy_genome_arrays']+' --split mature'
+
+
+	# commands['calculate_clap_enrichment'] = commands['calculate_clap_enrichment']+calcEnrich_tasks_numb
+	# commands['run_clap_jar'] = commands['run_clap_jar']+clap_jar_tasks_numb
+
+	### submit sbatch jobs to scheduler ###
+	jobID_trim_adapt = trim_adapter_slurm.sbatch(commands['trim_adapter_cmnd']) ## submit the job!
+	write_slurm_job(samp, 'trim_adapter', trim_adapter_slurm, commands['trim_adapter_cmnd'])
+
+	ncRNA_subtract_slurm.set_dependency('afterok:%s' % (jobID_trim_adapt))
+	jobID_ncRNA_subtract = ncRNA_subtract_slurm.sbatch(commands['ncRNA_subtract_cmnd'])
+	write_slurm_job(samp, 'ncRNA_subtract', ncRNA_subtract_slurm, commands['ncRNA_subtract_cmnd'])
+	
+	star_align_genome_slurm.set_dependency('afterok:%s' % (jobID_ncRNA_subtract))
+	jobID_star_align_genome = star_align_genome_slurm.sbatch(commands['star_align_cmnd'])
+	write_slurm_job(samp, 'star_align_genome', star_align_genome_slurm, commands['star_align_cmnd'])
+
+	dedeuplicate_bams_slurm.set_dependency('afterok:%s' % (jobID_star_align_genome))
+	jobID_deduplicate_bams = dedeuplicate_bams_slurm.sbatch(commands['deduplicate_bams_cmnd'])
+	write_slurm_job(samp, 'dedeuplicate_bams', dedeuplicate_bams_slurm, commands['deduplicate_bams_cmnd'])
+
+	split_nascent_bams_slurm.set_dependency('afterok:%s' % (jobID_deduplicate_bams))
+	jobID_split_nascent = split_nascent_bams_slurm.sbatch(commands['split_nascent_cmnd'])
+	write_slurm_job(samp, 'split_nascent_bams', split_nascent_bams_slurm, commands['split_nascent_cmnd'])
+
+	numpy_arrays_slurm.set_dependency('afterok:%s' % (jobID_deduplicate_bams))
+	jobID_numpy_arrays = numpy_arrays_slurm.sbatch(commands['numpy_genome_arrays'])
+	write_slurm_job(samp, 'numpy_genome_arrays', numpy_arrays_slurm, commands['numpy_genome_arrays'])
+
+	## nascent
+	numpy_nascent_slurm.set_dependency('afterok:%s' % (jobID_split_nascent))
+	jobID_numpy_nascent = numpy_nascent_slurm.sbatch(commands['numpy_genome_arrays_nascent'])
+	write_slurm_job(samp, 'numpy_nascent_arrays', numpy_nascent_slurm, commands['numpy_genome_arrays_nascent'])
+
+	## mature
+	numpy_mature_slurm.set_dependency('afterok:%s' % (jobID_numpy_nascent)) ## run last
+	jobID_numpy_mature = numpy_mature_slurm.sbatch(commands['numpy_genome_arrays_mature'])
+	write_slurm_job(samp, 'numpy_mature_arrays', numpy_mature_slurm, commands['numpy_genome_arrays_mature'])
+
+	return jobID_numpy_mature
+
+
+	#### Requires input as well #### 
+
+
+	# if samp not in input_sample:
+	# 	# calc_clap_enrich_slurm.set_dependency('afterok:%s' % (jobID_numpy_arrays))
+	# 	jobID_calc_enrich = calc_clap_enrich_slurm.sbatch(commands['calculate_clap_enrichment'])
+	# 	write_slurm_job(samp, 'calculate_clap_enrichment', calc_clap_enrich_slurm, commands['calculate_clap_enrichment'])
+	# 	return jobID_calc_enrich
+
+	# 	# run_clap_jar_slurm.set_dependency('afterok:%s' % (jobID_numpy_arrays))
+	# 	jobID_clap_jar = run_clap_jar_slurm.sbatch(commands['run_clap_jar'])
+	# 	write_slurm_job(samp, 'run_clap_jar', run_clap_jar_slurm, commands['run_clap_jar'])
+
+def slurm_capture_only(samp, jobList):
+
+	"""
+	analysis for capture compared to input_sample
+		requires both capture and input to have finished processing before running
+
+	set jobList = 0 to ignore afterok settings
+
+	jobList contains jobID's of final processing jobs,
+	use these for afterok
+	"""
+	slurmSetDir = f'{scriptDir}/scripts/slurm/yaml' ## dir with yaml files
+	jobDir = f'{rootDir}/jobs' ## output of jobfiles, and error logs
+	logDir = f'{rootDir}/logs'
+
+	if not jobList == 0:
+		jl = [str(x) for x in jobList]
+		jobOkList = ':'.join(jl)
+
+	### set commands to run
+	commands = dict()
+	commands['calculate_clap_enrichment'] = f'python \
+		{scriptDir}/scripts/python/calculate_clap_enrichment.py --samp {samp} --libset {libset} \
+		--binSize {enrichBinSize} --threadNumb '
+	commands['run_clap_jar'] = f'python \
+		{scriptDir}/scripts/python/run_clap_jar.py --samp {samp} --libset {libset} \
+		--scriptDir {scriptDir} --threadNumb '
+
+	### define slurm settings for each command
+	calc_clap_enrich_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_calc_clap_enrichments.yaml')
+	calcEnrich_tasks_numb = ntasks_lookup(calc_clap_enrich_slurm)
+
+	run_clap_jar_slurm = set_slurm_settings(samp, logDir, f'{slurmSetDir}/slurm_clapJar.yaml')
+	clap_jar_tasks_numb = ntasks_lookup(run_clap_jar_slurm)
+
+	### add ntasks for commands
 	commands['calculate_clap_enrichment'] = commands['calculate_clap_enrichment']+calcEnrich_tasks_numb
 	commands['run_clap_jar'] = commands['run_clap_jar']+clap_jar_tasks_numb
 
-	# ### submit sbatch jobs to scheduler ###
-	# jobID_trim_adapt = trim_adapter_slurm.sbatch(commands['trim_adapter_cmnd']) ## submit the job!
-	# write_slurm_job(samp, 'trim_adapter', trim_adapter_slurm, commands['trim_adapter_cmnd'])
+	### submit jobs using sbatch
+	if not jobList == 0:
+		calc_clap_enrich_slurm.set_dependency('afterok:%s' % (jobOkList))
+	jobID_calc_enrich = calc_clap_enrich_slurm.sbatch(commands['calculate_clap_enrichment'])
+	write_slurm_job(samp, 'calculate_clap_enrichment', calc_clap_enrich_slurm, commands['calculate_clap_enrichment'])
 
-	# ncRNA_subtract_slurm.set_dependency('afterok:%s' % (jobID_trim_adapt))
-	# jobID_ncRNA_subtract = ncRNA_subtract_slurm.sbatch(commands['ncRNA_subtract_cmnd'])
-	# write_slurm_job(samp, 'ncRNA_subtract', ncRNA_subtract_slurm, commands['ncRNA_subtract_cmnd'])
-	
-	# star_align_genome_slurm.set_dependency('afterok:%s' % (jobID_ncRNA_subtract))
-	# jobID_star_align_genome = star_align_genome_slurm.sbatch(commands['star_align_cmnd'])
-	# write_slurm_job(samp, 'star_align_genome', star_align_genome_slurm, commands['star_align_cmnd'])
-
-	# dedeuplicate_bams_slurm.set_dependency('afterok:%s' % (jobID_star_align_genome))
-	# jobID_deduplicate_bams = dedeuplicate_bams_slurm.sbatch(commands['deduplicate_bams_cmnd'])
-	# write_slurm_job(samp, 'dedeuplicate_bams', dedeuplicate_bams_slurm, commands['deduplicate_bams_cmnd'])
-
-	# numpy_arrays_slurm.set_dependency('afterok:%s' % (jobID_deduplicate_bams))
-	# jobID_numpy_arrays = numpy_arrays_slurm.sbatch(commands['numpy_genome_arrays'])
-	# write_slurm_job(samp, 'numpy_genome_arrays', numpy_arrays_slurm, commands['numpy_genome_arrays'])
-
-	## skip input for peak calling
-	if samp not in input_sample:
-		# calc_clap_enrich_slurm.set_dependency('afterok:%s' % (jobID_numpy_arrays))
-		# jobID_calc_enrich = calc_clap_enrich_slurm.sbatch(commands['calculate_clap_enrichment'])
-		# write_slurm_job(samp, 'calculate_clap_enrichment', calc_clap_enrich_slurm, commands['calculate_clap_enrichment'])
-
-		# run_clap_jar_slurm.set_dependency('afterok:%s' % (jobID_numpy_arrays))
-		jobID_clap_jar = run_clap_jar_slurm.sbatch(commands['run_clap_jar'])
-		write_slurm_job(samp, 'run_clap_jar', run_clap_jar_slurm, commands['run_clap_jar'])
-
+	if not jobList == 0:
+		run_clap_jar_slurm.set_dependency('afterok:%s' % (jobOkList))
+	jobID_clap_jar = run_clap_jar_slurm.sbatch(commands['run_clap_jar'])
+	write_slurm_job(samp, 'run_clap_jar', run_clap_jar_slurm, commands['run_clap_jar'])
 
 
 def main():
@@ -254,9 +340,20 @@ def main():
 	make_out_dirs(rootDir, readProcDir, alignDir, genomeName)
 	copy_scripts(rootDir, scriptDir)
 
+	### processing of all samples
+
+	jobList = []
 	for samp in samplelist:
 		print(samp, 'starting')
-		slurm_single_sample(samp)
+		finalJob = slurm_single_sample(samp)
+		jobList.append(finalJob)
+
+	print(jobList)
+
+	for samp in capture_samples:
+		slurm_capture_only(samp, jobList=jobList)
+
+	### processing of capture samples only
 
 if __name__ == '__main__':
 	main()

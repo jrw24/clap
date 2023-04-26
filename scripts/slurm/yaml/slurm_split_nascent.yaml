@@ -1,0 +1,7 @@
+---
+time: '01:00:00'
+ntasks: '8'
+nodes: '1'
+mem_per_cpu: '6G'
+output: '{logDir}/split_nascent_{samp}.out'
+error: '{logDir}/split_nascent_{samp}.err'

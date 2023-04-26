@@ -56,6 +56,7 @@ parser= argparse.ArgumentParser()
 parser.add_argument('--samp', help= 'name of sample being processed')
 parser.add_argument('--libset', help= 'path to libsettings file')
 parser.add_argument('--threadNumb', help= 'number of threads to use')
+parser.add_argument('--split', help= 'whether bam file has been split by "nascent" or "mature"')
 args = parser.parse_args()
 
 ### load libset into namespace 
@@ -67,46 +68,44 @@ for attr in dir(libset):
 
 class npArrayBuilder(object):
 
-	def __init__(self, inBam, outDir, genome, samp, **kwargs):
+	def __init__(self, inBam, outDirTemp, outDir, genome, samp, **kwargs):
 		self.inBam = inBam
+		self.outDirTemp = outDirTemp ## temp file on /central/scratch
 		self.outDir = outDir
 		self.genome = genome
 		self.samp = samp 
 		self.__dict__.update(kwargs)
 
 
-	def build_coverage_array_singleChrom(self, chrom):
+	def build_coverage_array_singleChrom_all(self, chrom):
 		"""
 
 		"""
 
 		bamfile = pysam.AlignmentFile(self.inBam, "rb")
 
-		# wrong_strand_reads = 0
 		valid_reads = 0
 		valid_read_pos = 0
 		valid_read_neg = 0
-		# reads_out_of_bounds = 0
 		not_proper_pair = 0
 		qc_fail = 0
 
 		print("building arrays for %s" % (chrom)) 
-		# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'))
 		### define np arrays that are the length of each chromosome
 		### create seperate arrays for 2nd reads, and for coverage
 		
 		## -- both strands -- ##
 		chromSecReadArray = np.zeros(len(self.genome[chrom]))
 		chromCovArray = np.zeros(len(self.genome[chrom]))
-		# chromCovReadLenNormArray = np.zeros(len(genome[chrom]))
+		chromCovReadLenNormArray = np.zeros(len(self.genome[chrom]))
 
 		## postivie strand -- ##
-		chromSecReadArrayPos = np.zeros(len(self.genome[chrom]))
+		# chromSecReadArrayPos = np.zeros(len(self.genome[chrom]))
 		# chromCovArrayPos = np.zeros(len(genome[chrom]))
 		# chromCovReadLenNormArrayPos = np.zeros(len(genome[chrom]))
 
 		## negative strand -- ##
-		chromSecReadArrayNeg = np.zeros(len(self.genome[chrom]))
+		# chromSecReadArrayNeg = np.zeros(len(self.genome[chrom]))
 		# chromCovArrayNeg = np.zeros(len(genome[chrom]))
 		# chromCovReadLenNormArrayNeg = np.zeros(len(genome[chrom]))
 
@@ -127,17 +126,12 @@ class npArrayBuilder(object):
 				else:
 					read_strand = "+"
 				
-				# if not read_strand == geneFeatures['strand']:
-				# 	wrong_strand_reads +=1
-				# 	continue
-				
 				if read_strand == "+":
 
 					readGenomicCoord = read.reference_start ## this is 0 based, add 1 for gff coords
 
 					### add to second read array
 					chromSecReadArray[readGenomicCoord] +=1 ## add count of 1 for position of second read
-					chromSecReadArrayPos[readGenomicCoord] +=1
 
 					#### build read position array relative to genomic chromosome position
 					read_array = []
@@ -146,8 +140,6 @@ class npArrayBuilder(object):
 					for tup in read.cigartuples:
 						if tup[0] == 0:
 							for i in range(tup[1]):
-								# if readGenomicCoord+counter < len(geneArrayCov): ## prevent reads that run off end of transcript
-								# chromCovArray[readGenomicCoord+counter]+=1
 								read_array.append(readGenomicCoord+counter) ### add this position to the read array
 								counter +=1
 						elif tup[0] == 1: ## insertion to reference
@@ -164,23 +156,23 @@ class npArrayBuilder(object):
 					for pos in read_array:
 						chromCovArray[pos] +=1
 						# chromCovArrayPos[pos] +=1
-					# rl_norm = 1.0/len(read_array)
+					rl_norm = 1.0/len(read_array)
 
-					### add each position in read to chromosome array, divide by read_length
-					# 	### each read has a sum of 1.0 now
-					# for pos in read_array:
-					# 	chromCovReadLenNormArray[pos] += rl_norm
-					# 	chromCovReadLenNormArrayPos[pos] += rl_norm
+					## add each position in read to chromosome array, divide by read_length
+						### each read has a sum of 1.0 now
+					for pos in read_array:
+						chromCovReadLenNormArray[pos] += rl_norm
+						# chromCovReadLenNormArrayPos[pos] += rl_norm
 
 					valid_reads += 1
-					valid_read_pos += 1
+					# valid_read_pos += 1
 
 				if read_strand == "-":
 					readGenomicCoord = read.reference_end-1 ## this is 1 based for actual position, subtract 1 for zero based
 					
 					### add to second read array
 					chromSecReadArray[readGenomicCoord] +=1 ## add count of 1 for second reads
-					chromSecReadArrayNeg[readGenomicCoord] +=1
+					# chromSecReadArrayNeg[readGenomicCoord] +=1
 
 					### build read position array relative to genomic chromosome position
 					read_array = []
@@ -191,9 +183,6 @@ class npArrayBuilder(object):
 						if tup[0] == 0:
 							for i in range(tup[1]):
 								read_array.append(readGenomicCoord+counter)
-								# if tr_coord+counter >= 0: ## prevent reads that run off start of transcript
-								# 	# print(i, tr_coord, counter)
-								# 	geneArrayCov[tr_coord+counter]+=1
 								counter -=1
 					#             print(i)
 						elif tup[0] == 1: ## insertion to reference
@@ -210,13 +199,13 @@ class npArrayBuilder(object):
 					for pos in read_array:
 						chromCovArray[pos] +=1
 						# chromCovArrayNeg[pos] +=1
-					# rl_norm = 1.0/len(read_array)
+					rl_norm = 1.0/len(read_array)
 
-					### add each position in read to chromosome array, divide by read_length
-						### each read has a sum of 1.0 now
-					# for pos in read_array:
-					# 	chromCovReadLenNormArray[pos] += rl_norm
-					# 	chromCovReadLenNormArrayNeg[pos] += rl_norm
+					## add each position in read to chromosome array, divide by read_length
+						## each read has a sum of 1.0 now
+					for pos in read_array:
+						chromCovReadLenNormArray[pos] += rl_norm
+						# chromCovReadLenNormArrayNeg[pos] += rl_norm
 
 					valid_reads += 1
 					valid_read_neg += 1
@@ -231,9 +220,9 @@ class npArrayBuilder(object):
 
 
 		## write total valid reads to an output file
-		valid_reads_file = "%s/%s_%s_validReads.txt" % (self.outDir, chrom, self.samp)
-		valid_reads_file_pos = "%s/%s_%s_validReadsPos.txt" % (self.outDir, chrom, self.samp)
-		valid_reads_file_neg = "%s/%s_%s_validReadsNeg.txt" % (self.outDir, chrom, self.samp)
+		valid_reads_file = "%s/%s_%s_validReads.txt" % (self.outDirTemp, chrom, self.samp)
+		# valid_reads_file_pos = "%s/%s_%s_validReadsPos.txt" % (self.outDir, chrom, self.samp)
+		# valid_reads_file_neg = "%s/%s_%s_validReadsNeg.txt" % (self.outDir, chrom, self.samp)
 		
 		# with open(valid_reads_file, 'w') as f:
 		# 	f.write("%s" % valid_reads)
@@ -245,24 +234,227 @@ class npArrayBuilder(object):
 		# 	f.write("%s" % valid_read_neg)
 
 		### write single arrays to numpy array files
-		secReadOut = "%s/%s_%s_secondReadGenome.npy" % (self.outDir, self.samp, chrom)
+		secReadOut = "%s/%s_%s_secondReadGenome.npy" % (self.outDirTemp, self.samp, chrom)
 		# secReadDictRpmOut = "%s/%s_secondReadGenomeDictRpm.npz" % (outDir, samp)
-		covOut = "%s/%s_%s_covGenome.npy" % (self.outDir, self.samp, chrom)
+		covOut = "%s/%s_%s_covGenome.npy" % (self.outDirTemp, self.samp, chrom)
+		covRlNormOut = "%s/%s_%s_covGenomeRlNorm.npy" % (self.outDirTemp, self.samp, chrom)
 		# covDictRlNormOut = "%s/%s_covGenomeDictRlNormOut.npz" % (outDir, samp)
 		# covDictRpmRlNormOut = "%s/%s_covDictRpmRlNormOut.npz" % (outDir, samp)
-		secReadPosOut = "%s/%s_%s_secondReadGenomePos.npy" % (self.outDir, self.samp, chrom)
-		secReadNegOut = "%s/%s_%s_secondReadGenomeNeg.npy" % (self.outDir, self.samp, chrom)
+		# secReadPosOut = "%s/%s_%s_secondReadGenomePos.npy" % (self.outDir, self.samp, chrom)
+		# secReadNegOut = "%s/%s_%s_secondReadGenomeNeg.npy" % (self.outDir, self.samp, chrom)
 
-		print("outfile paths: \n %s \n %s \n %s \n %s" % (secReadOut, covOut, secReadPosOut, secReadNegOut))
+		print("outfile paths: \n %s \n %s \n %s " % (secReadOut, covOut, covRlNormOut))
 
 		np.save(secReadOut, chromSecReadArray)
 		np.save(covOut, chromCovArray)
-		np.save(secReadPosOut, chromSecReadArrayPos)
-		np.save(secReadNegOut, chromSecReadArrayNeg)
+		np.save(covRlNormOut, chromCovReadLenNormArray)
+		# np.save(secReadPosOut, chromSecReadArrayPos)
+		# np.save(secReadNegOut, chromSecReadArrayNeg)
 
 
+	def build_coverage_array_singleChrom_pos(self, chrom):
+		"""
+		For positive stranded reads
+		"""
 
-def concat_np_array_single(outDir, samp, chromList, arraySuffix):
+		bamfile = pysam.AlignmentFile(self.inBam, "rb")
+
+		valid_read_pos = 0
+		not_proper_pair = 0
+		qc_fail = 0
+
+		print("building arrays for %s, pos strand only" % (chrom)) 
+		### define np arrays that are the length of each chromosome
+		### create seperate arrays for 2nd reads, and for coverage
+		
+
+		## postivie strand -- ##
+		chromSecReadArrayPos = np.zeros(len(self.genome[chrom]))
+		chromCovArrayPos = np.zeros(len(self.genome[chrom]))
+		chromCovReadLenNormArrayPos = np.zeros(len(self.genome[chrom]))
+
+
+		### iterate over each read in the bamfile that is found on that chromosome
+		for read in bamfile.fetch(chrom): 
+
+			if not read.is_proper_pair:
+				not_proper_pair+=1
+				continue
+			if read.is_qcfail:
+				qc_fail+=1
+				continue
+
+			if read.is_read2: #correct strand for clap data is read2 alignments
+				if read.is_reverse:
+					read_strand = "-"
+				else:
+					read_strand = "+"
+				
+				if read_strand == "+":
+
+					readGenomicCoord = read.reference_start ## this is 0 based, add 1 for gff coords
+
+					### add to second read array
+					chromSecReadArrayPos[readGenomicCoord] +=1
+
+					#### build read position array relative to genomic chromosome position
+					read_array = []
+					counter = 0
+					read_len = len(read.seq)
+					for tup in read.cigartuples:
+						if tup[0] == 0:
+							for i in range(tup[1]):
+								read_array.append(readGenomicCoord+counter) ### add this position to the read array
+								counter +=1
+						elif tup[0] == 1: ## insertion to reference
+							read_len +=1
+						elif tup[0] == 2: ## deletion to reference
+							read_len -=1
+						elif tup[0] == 3: ## spliced junction
+							counter+=tup[1] ## add spliced distance
+						elif tup[0] ==4: ## softclip
+							pass ## softclips should not be included in read_genomic_coord start position
+						else:
+							pass ## ignore other cigar entries
+					### add each position in the read to the chromosome array
+					for pos in read_array:
+						chromCovArrayPos[pos] +=1
+					rl_norm = 1.0/len(read_array)
+
+					## add each position in read to chromosome array, divide by read_length
+						### each read has a sum of 1.0 now
+					for pos in read_array:
+						chromCovReadLenNormArrayPos[pos] += rl_norm
+
+					valid_read_pos += 1
+
+				if read_strand == "-":
+					continue
+					
+		print("finished chrom array for %s, positive strand " % chrom)
+
+
+		## write total valid reads to an output file
+		valid_reads_file = "%s/%s_%s_validReadsPos.txt" % (self.outDirTemp, chrom, self.samp)
+		
+		with open(valid_reads_file, 'w') as f:
+			f.write("%s" % valid_read_pos)
+
+
+		### write single arrays to numpy array files
+		secReadOutPos = "%s/%s_%s_secondReadGenomePos.npy" % (self.outDirTemp, self.samp, chrom)
+		covOutPos = "%s/%s_%s_covGenomePos.npy" % (self.outDirTemp, self.samp, chrom)
+		covRlNormOutPos = "%s/%s_%s_covGenomeRlNormPos.npy" % (self.outDirTemp, self.samp, chrom)
+
+
+		print("outfile paths: \n %s \n %s \n %s " % (secReadOutPos, covOutPos, covRlNormOutPos))
+
+		np.save(secReadOutPos, chromSecReadArrayPos)
+		np.save(covOutPos, chromCovArrayPos)
+		np.save(covRlNormOutPos, chromCovReadLenNormArrayPos)
+
+
+	def build_coverage_array_singleChrom_neg(self, chrom):
+		"""
+		For negative stranded reads
+		"""
+
+		bamfile = pysam.AlignmentFile(self.inBam, "rb")
+		valid_read_neg = 0
+		not_proper_pair = 0
+		qc_fail = 0
+
+		print("building arrays for %s, neg strand only" % (chrom)) 
+		### define np arrays that are the length of each chromosome
+		### create seperate arrays for 2nd reads, and for coverage
+		
+
+		## negative strand -- ##
+		chromSecReadArrayNeg = np.zeros(len(self.genome[chrom]))
+		chromCovArrayNeg = np.zeros(len(self.genome[chrom]))
+		chromCovReadLenNormArrayNeg = np.zeros(len(self.genome[chrom]))
+
+
+		### iterate over each read in the bamfile that is found on that chromosome
+		for read in bamfile.fetch(chrom): 
+
+			if not read.is_proper_pair:
+				not_proper_pair+=1
+				continue
+			if read.is_qcfail:
+				qc_fail+=1
+				continue
+
+			if read.is_read2: #correct strand for clap data is read2 alignments
+				if read.is_reverse:
+					read_strand = "-"
+				else:
+					read_strand = "+"
+				
+				if read_strand == "+":
+					continue
+
+				if read_strand == "-":
+					readGenomicCoord = read.reference_end-1 ## this is 1 based for actual position, subtract 1 for zero based
+					
+					### add to second read array
+					chromSecReadArrayNeg[readGenomicCoord] +=1
+
+					### build read position array relative to genomic chromosome position
+					read_array = []
+					counter = 0
+					read_len = len(read.seq)
+					for tup in read.cigartuples:
+						# print(tup[0])
+						if tup[0] == 0:
+							for i in range(tup[1]):
+								read_array.append(readGenomicCoord+counter)
+								counter -=1
+					#             print(i)
+						elif tup[0] == 1: ## insertion to reference
+							read_len +=1
+						elif tup[0] == 2: ## deletion to reference
+							read_len -=1
+						elif tup[0] == 3: ## spliced junction
+							counter-=tup[1] ## add spliced distance
+						elif tup[0] ==4: ## softclip
+							pass ## softclips should not be included in read_genomic_coord start position
+						else:
+							pass ## ignore other bam entries
+					### add each position in the read to the chromosome array
+					for pos in read_array:
+						chromCovArrayNeg[pos] +=1
+					rl_norm = 1.0/len(read_array)
+
+					## add each position in read to chromosome array, divide by read_length
+						## each read has a sum of 1.0 now
+					for pos in read_array:
+						chromCovReadLenNormArrayNeg[pos] += rl_norm
+
+					valid_read_neg += 1
+
+		print("finished chrom array for %s, neg strand " % chrom)
+
+		## write total valid reads to an output file
+		valid_reads_file = "%s/%s_%s_validReadsNeg.txt" % (self.outDirTemp, chrom, self.samp)
+		
+		with open(valid_reads_file, 'w') as f:
+			f.write("%s" % valid_read_neg)
+
+
+		### write single arrays to numpy array files
+		secReadOutNeg = "%s/%s_%s_secondReadGenomeNeg.npy" % (self.outDirTemp, self.samp, chrom)
+		covOutNeg = "%s/%s_%s_covGenomeNeg.npy" % (self.outDirTemp, self.samp, chrom)
+		covRlNormOutNeg = "%s/%s_%s_covGenomeRlNormNeg.npy" % (self.outDirTemp, self.samp, chrom)
+
+		print("outfile paths: \n %s \n %s \n %s " % (secReadOutNeg, covOutNeg, covRlNormOutNeg))
+
+		np.save(secReadOutNeg, chromSecReadArrayNeg)
+		np.save(covOutNeg, chromCovArrayNeg)
+		np.save(covRlNormOutNeg, chromCovReadLenNormArrayNeg)
+
+
+def concat_np_array_single(outDirTemp, outDir, samp, chromList, arraySuffix):
 	"""
 	After assigning reads to numpy arrays, 
 		load these into memory, 
@@ -279,7 +471,7 @@ def concat_np_array_single(outDir, samp, chromList, arraySuffix):
 	npArrayDict = dict()
 	npArrayDictOutfile = '%s/%s_%s.npz' % (outDir, samp, arraySuffix)
 	for chrom in chromList:
-		chromArrayFile = '%s/%s_%s_%s.npy' % (outDir, samp, chrom, arraySuffix)
+		chromArrayFile = '%s/%s_%s_%s.npy' % (outDirTemp, samp, chrom, arraySuffix)
 		chromArray = np.load(chromArrayFile)
 		npArrayDict[chrom] = chromArray
 		subprocess.Popen('rm %s' % (chromArrayFile), shell=True).wait()
@@ -406,19 +598,21 @@ def bedgraph_mp_handler(bgtuple):
 	bedGraph_writer_genome(npArray=bgtuple[0], outBedGraph=bgtuple[1])
 	bedgraph_to_bigwig_conversion(npArray=bgtuple[0], inBedGraph=bgtuple[1])
 
-def build_coverage_arrays_mp_hanlder(chromList, inBam, outDir, genome, samp):
+def build_coverage_arrays_mp_hanlder(chromList, inBam, outDirTemp, outDir, genome, samp):
 
 	npArray = npArrayBuilder(
 		inBam = inBam,
+		outDirTemp = outDirTemp,
 		outDir = outDir,
 		genome = genome,
 		samp= samp
 		)
 
-
 	print('starting mp handler')
 	pool = ProcessPool(nodes=len(chromList))
-	results = pool.map(npArray.build_coverage_array_singleChrom, chromList)
+	results = pool.map(npArray.build_coverage_array_singleChrom_all, chromList)
+	resultsPos = pool.map(npArray.build_coverage_array_singleChrom_pos, chromList)
+	resultsNeg = pool.map(npArray.build_coverage_array_singleChrom_neg, chromList)
 
 	return results
 
@@ -446,12 +640,18 @@ if __name__ == '__main__':
 
 	genome = twobitreader.TwoBitFile(twobitfile) # create handler to open the 2bit file
 	chromList = validChroms(twobitfile)
-	inBam = f'{rootDir}/{alignDir}/{genomeName}/star/dedupe/{args.samp}_dedupe.sorted.bam'
-	outDir = f'{rootDir}/npArrayDir/{args.samp}'
+	if args.split:
+		inBam = f'{rootDir}/{alignDir}/{genomeName}/star/nascent/{args.samp}.split.{args.split}.sorted.bam'
+		outDirTemp = '/central/scratch/%s/%s/%s/npArray/%s/%s' % (os.environ['USER'], rootDir, experiment, args.samp, args.split)
+		outDir = f'{rootDir}/npArrayDir/{args.split}/{args.samp}'
+	else:
+		inBam = f'{rootDir}/{alignDir}/{genomeName}/star/dedupe/{args.samp}_dedupe.sorted.bam'
+		outDirTemp = '/central/scratch/%s/%s/%s/npArray/%s' % (os.environ['USER'], rootDir, experiment, args.samp)
+		outDir = f'{rootDir}/npArrayDir/{args.samp}'
+	if not os.path.exists(outDirTemp): os.makedirs(outDirTemp)
 	if not os.path.exists(outDir):	os.makedirs(outDir)
 
-
-	build_coverage_arrays_mp_hanlder(chromList, inBam, outDir, genome, args.samp)
+	build_coverage_arrays_mp_hanlder(chromList, inBam, outDirTemp, outDir, genome, args.samp)
 
 	print(chromList)
 
@@ -468,23 +668,25 @@ if __name__ == '__main__':
 	secReadGenomeNeg.npy
 	"""
 
-	# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'), 'secReadGenome')
-	concat_np_array_single(outDir, args.samp, chromList, arraySuffix='secondReadGenome')
-	# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'), 'covGenome')
-	concat_np_array_single(outDir, args.samp, chromList, arraySuffix='covGenome')
-	# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'), 'pos')
-	concat_np_array_single(outDir, args.samp, chromList, arraySuffix='secondReadGenomePos')
-	# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'), 'neg')
-	concat_np_array_single(outDir, args.samp, chromList, arraySuffix='secondReadGenomeNeg')
-	print('done concating arrays')
-	# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'))
+	array_suffix_list = [
+		'secondReadGenome',
+		'covGenome',
+		'covGenomeRlNorm',
+		'secondReadGenomePos',
+		'covGenomePos',
+		'covGenomeRlNormPos',
+		'secondReadGenomeNeg',
+		'covGenomeNeg',
+		'covGenomeRlNormNeg',
+	]
 
-	# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'), 'secReadGenome-norm')
-	normalize_np_array(outDir, args.samp, chromList, arraySuffix='secondReadGenome')
-	# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'), 'secReadGenome-norm-pos')
-	normalize_np_array(outDir, args.samp, chromList, arraySuffix='secondReadGenomePos')
-	# print(datetime.today().strftime('%Y-%m-%d-%H:%M:%S'), 'secReadGenome-norm-neg')
-	normalize_np_array(outDir, args.samp, chromList, arraySuffix='secondReadGenomeNeg')
+	for arr in array_suffix_list:
+		concat_np_array_single(outDirTemp, outDir, args.samp, chromList, arraySuffix=arr)
+	print('done concating arrays')
+
+	for arr in array_suffix_list:
+		normalize_np_array(outDir, args.samp, chromList, arraySuffix=arr)
+	print('done normalizing arrays')
 
 	npz_array_to_bedgraph_and_bw_mp(outDir, chrSizes)
 
