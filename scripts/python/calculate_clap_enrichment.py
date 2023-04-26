@@ -30,11 +30,7 @@ To Do List (230411):
 	- addition of pseudocounts for low expressed input genes
 		- how should we handle Inf?
 	- make qc plots of reads per window across the genome
-	- incorporate strandedness
-		- this will require minor modifactions to npz array generation
-		- have the code, just need to uncomment and change to np.divide()
-
-
+	
 """
 
 
@@ -108,10 +104,16 @@ class clapEnrichment(object):
 	"""
 
 
-	def __init__(self, inputNpzArray, captureNpzArray, bed, binSize, outRootDir, 
+	def __init__(self, inputNpzArray, inputNpzArrayPos, inputNpzArrayNeg,
+			captureNpzArray, captureNpzArrayPos, captureNpzArrayNeg,
+			bed, binSize, outRootDir, 
 			samp, inputTotalReads, captureTotalReads, **kwargs):
 		self.inputNpzArray = inputNpzArray
+		self.inputNpzArrayPos = inputNpzArrayPos
+		self.inputNpzArrayNeg = inputNpzArrayNeg
 		self.captureNpzArray = captureNpzArray
+		self.captureNpzArrayPos = captureNpzArrayPos
+		self.captureNpzArrayNeg = captureNpzArrayNeg
 		self.bed = bed
 		self.binSize = int(binSize)
 		self.outRootDir = outRootDir
@@ -149,6 +151,40 @@ class clapEnrichment(object):
 			endArray = np.concatenate([endArrayPartial, endArrayLast])
 
 		return (startArray, endArray)
+
+	def start_end_arrays_extend(self, start, end, strand, binSize):
+		"""
+		given starting position, ending position, and binSize
+			determine start positions and end positions for a given gene
+
+		if this is longer than the lenght of the gene, extend the array to cover extra bases
+		"""
+
+		### Check to see if gene is divisible by binSize
+		###	If not, then need to extend the final window
+
+		if (end-start) % binSize == 0:
+			### start array
+			startArray = np.arange(start,end,binSize)
+			### end array
+			endArray = np.arange(start+binSize,end+binSize,binSize)
+		else:
+			if strand == '+': ## extend end position
+				extendDist = binSize-((end-start)%binSize)
+				newEnd = end+extendDist
+				startArray = np.arange(start,newEnd,binSize)
+				endArray = np.arange(start+binSize,newEnd+binSize,binSize)
+			elif strand == '-': ## extend start position
+				extendDist = binSize-((end-start)%binSize)
+				newStart = start-extendDist
+				startArray = np.arange(newStart,end,binSize)
+				endArray = np.arange(newStart+binSize,end+binSize,binSize)
+			else:
+				print('strand not set!')
+				sys.exit(1)
+
+		return (startArray, endArray)
+
 
 	def start_end_arrays_chrom(self, start, end, binSize):
 		"""
@@ -228,10 +264,11 @@ class clapEnrichment(object):
 		"""
 
 		medianVal = np.median(npArray)
-		print(medianVal, '<--- median Val')
+		# print(medianVal, '<--- median Val')
 		npArray[npArray < medianVal] = medianVal
 		
 		return npArray
+
 
 	def calc_gene_enrichment_single_chrom(self, chrom):
 		"""
@@ -251,7 +288,11 @@ class clapEnrichment(object):
 		print('loading numpy arrays')
 		### load in the input npzArray into memory for the chromosome of interest
 		inputArray = self.inputNpzArray[chrom]
+		inputArrayPos = self.inputNpzArrayPos[chrom]
+		inputArrayNeg = self.inputNpzArrayNeg[chrom]
 		captureArray = self.captureNpzArray[chrom]
+		captureArrayPos = self.captureNpzArrayPos[chrom]
+		captureArrayNeg = self.captureNpzArrayNeg[chrom]
 
 		### create an list to store output data.frames for each gene in the chromosome
 		outDfListChrom = []
@@ -259,13 +300,23 @@ class clapEnrichment(object):
 		### define the output column names for each data.frame
 		outDfColNames = [
 				'chrom',
+				'strand',
 				'chromStartWindow',
 				'chromEndWindow',
+				'igv',
 				'gene',
 				'inputReadCount',
 				'inputFloorCount',
 				'captureReadCount',
-				'enrichValue',
+				'inputSum',
+				'captureSum',
+				'interEnrichValue',
+				'intraInputMean',
+				'intraInputMedian',
+				'intraCapMean',
+				'intraCapMedian',
+				'meanIntraRatio',
+				'medianIntraRatio'
 				]
 
 		for row in bedChrom.index:
@@ -273,13 +324,22 @@ class clapEnrichment(object):
 			gene = bedChrom.loc[row,'gene']
 			start = int(bedChrom.loc[row, 'chromStart'])
 			end = int(bedChrom.loc[row, 'chromEnd'])
-
-			### slice the arrays to get only the region containing the gene
-			iarray = inputArray[start:end]
-			carray = captureArray[start:end]
+			strand = bedChrom.loc[row, 'strand']
 
 			### get the start positions and end positions over the gene
-			startArray, endArray = self.start_end_arrays(start, end, self.binSize)
+			startArray, endArray = self.start_end_arrays_extend(start, end, strand, self.binSize)
+			igvLookUp = np.array([f'{chrom}:{startArray[i]}-{endArray[i]}' for i in range(len(startArray))])
+
+			### slice the arrays to get only the region containing the gene
+			if strand == '+':
+				iarray = inputArrayPos[start:end]
+				carray = captureArrayPos[start:end]
+			elif strand == '-':
+				iarray = inputArrayNeg[start:end]
+				carray = captureArrayNeg[start:end]
+			else:
+				print('strand not set for %s !!!' % (gene))
+				sys.exit(1)
 
 			### get the counts from the input file
 			inputCounts = self.bin_array_counts(iarray)
@@ -293,20 +353,53 @@ class clapEnrichment(object):
 			### calculate enrichments of the caputure sample relative to the floored input sample
 			enrichArray = captureCounts/floorInputCounts
 
+			### for Intra - calculations (peaks within a given gene)
+			input_sum = np.sum(inputCounts)
+			input_mean = np.mean(inputCounts)
+			input_median = np.median(inputCounts)
+			cap_sum = np.sum(captureCounts)
+			cap_mean = np.mean(captureCounts)
+			cap_median = np.median(captureCounts)
+
+			### calculate enrichments for Intra
+			intraInputMean = np.divide(inputCounts, input_mean)
+			intraInputMedian = np.divide(inputCounts, input_median)
+			intraCapMean = np.divide(captureCounts, cap_mean)
+			intraCapMedian = np.divide(captureCounts, cap_median)
+
+			### calculate Intra to Intra enrich ratios:
+			meanIntraRatio = np.divide(intraCapMean, intraInputMean)
+			medianIntraRatio = np.divide(intraCapMedian, intraInputMedian)
+
+			### simulations for permutation test ---
+
 			### build arrays with the chrom and gene information of the same length
 			chrArray = np.repeat(chrom, startArray.size)
+			strandArray = np.repeat(strand, startArray.size)
 			geneArray = np.repeat(gene, startArray.size)
+			inpSum = np.repeat(input_sum, startArray.size)
+			capSum = np.repeat(cap_sum, startArray.size)
 
 			### store all of the arrays in a single list
 			outArrays = [
 				chrArray, 
+				strandArray,
 				startArray, 
 				endArray, 
+				igvLookUp,
 				geneArray, 
 				inputCounts,
 				floorInputCounts,
 				captureCounts,
-				enrichArray 
+				inpSum,
+				capSum,
+				enrichArray,
+				intraInputMean,
+				intraInputMedian,
+				intraCapMean,
+				intraCapMedian,
+				meanIntraRatio,
+				medianIntraRatio
 				] 
 
 			### zip these into a dictionary and convert to a dataframe
@@ -386,7 +479,6 @@ class clapEnrichment(object):
 		dfOutChrom = pd.DataFrame.from_dict(dict(zip(outDfColNames, outArray))) 
 		return dfOutChrom
 
-
 	def gene_enrichments_iterate_through_chroms(self):
 		
 		"""
@@ -461,6 +553,90 @@ class clapEnrichment(object):
 		dfOut.to_csv(dfOutFile, sep='\t', compression='gzip')
 		return dfOut
 
+	def filter_enriched_peaks_gene(self, df, name):
+
+		print('--- log transforming enrichments ---')
+		### calculate log10 enrichment values for each window
+		df['log10enrichInter']=np.log10(df['interEnrichValue'])
+		df['log10IntraMean']=np.log10(df['intraCapMean'])
+		df['log10IntraMedian']=np.log10(df['intraCapMedian'])
+
+
+		### replace all 'Inf' values with 'NaN'
+		### and then drop all 'NaN' values in the table
+		df.replace([np.inf, -np.inf], np.nan, inplace=True)
+		df.dropna(axis=0, inplace=True)
+
+
+		### --- perform hypergeometric test ---
+		"""
+		discrete probability function that requires integers and not floats!
+			Can not draw 6.666 jellybeans out a jar...
+			Therefore, we must convert back to integer numbers 
+				of reads from normalized reads
+
+		R:
+		read.stats$phyper.bis <- 
+			phyper(
+				chip.counts = capReads,
+				m.per.window = windowReads,
+				n.per.window = outsideReads,
+				k = captot
+				)
+
+		Python:
+		hp = hypergeom.sf(
+			k=capReads, ## number of successes
+			M=libraryTot, ## population size (also called N)
+			n=captot, ## successes in populatin (also called K)
+			N=windowReads ## sample size (also called n)
+			)
+
+		"""
+
+		print('--- calculating hypergeometric tests ---', datetime.now())
+		### retrieve total mapped reads for input (in millions of reads)
+		with open(self.inputTotalReads,'r') as f:
+			inputTotFloat = float(f.read())
+		inputTot = int(np.round(inputTotFloat * 1E6)) ## convert back to total reads
+
+		with open(self.captureTotalReads,'r') as f:
+			capTotFloat = float(f.read())
+		capTot = int(np.round(capTotFloat * 1E6)) ## np.round rounds correctly here, int() does not always
+
+		libraryTot = inputTot + capTot 
+
+		for row in df.index:
+			### convert to raw read values
+			inputReads = int(np.round(df.loc[row,'inputReadCount']*inputTotFloat))
+			capReads = int(np.round(df.loc[row,'captureReadCount']*capTotFloat))
+			### sum total reads in window (total number of jellybeans)
+			windowReads = inputReads + capReads
+			### calc remaining reads not in window (jellybeans still in the jar)
+			outsideReads = libraryTot - windowReads
+
+			### calculate a p-value using the hypergeometric distribution
+			### sf ('survival function') is 1-cdf (opposite of the cumulative distribution function)
+			hp = hypergeom.sf(
+				k=capReads, ## number of successes
+				M=libraryTot, ## population size - total reads
+				n=capTot, ## total number of reads in capture
+				N=windowReads ## total number of reads in window
+				)
+
+			### finally, add the p-value to the data.frame
+			df.at[row,'hypergeom_p'] = hp 
+
+		### sort dataframe by the most enriched genes (logscale) and write to output table
+		print('--- writing output enrichment table ---', datetime.now())
+		df.sort_values('log10enrich', ascending=False, inplace=True)
+		df.reset_index(drop=True,inplace=True)
+
+		dfOutFile = '%s/%s_%s_topEnriched_gene.tsv.gz' % (self.outRootDir, self.samp, name)
+		df.to_csv(dfOutFile, sep='\t', compression='gzip')
+
+
+
 	def filter_enriched_peaks_chrom(self, df, name):
 		"""
 		take an input data.frame for the whole geneome
@@ -479,7 +655,7 @@ class clapEnrichment(object):
 
 		print('--- log transforming enrchments ---',datetime.now())
 		### calculate log10 enrichment values for each window
-		df['log10enrich']=np.log(df['enrichValue'])
+		df['log10enrich']=np.log10(df['enrichValue'])
 
 		### replace all 'Inf' values with 'NaN'
 		### and then drop all 'NaN' values in the table
@@ -595,17 +771,31 @@ def main():
 	### make generator objects for loading numpy arrays
 	inputSamp = input_sample[0]
 	inputNpPath = f'{rootDir}/npArrayDir/{inputSamp}/{inputSamp}_secondReadGenomeRPM.npz'
+	inputNpPathPos = f'{rootDir}/npArrayDir/{inputSamp}/{inputSamp}_secondReadGenomePosRPM.npz'
+	inputNpPathNeg = f'{rootDir}/npArrayDir/{inputSamp}/{inputSamp}_secondReadGenomeNegRPM.npz'
+
 	captureNpPath = f'{rootDir}/npArrayDir/{args.samp}/{args.samp}_secondReadGenomeRPM.npz'
+	captureNpPathPos = f'{rootDir}/npArrayDir/{args.samp}/{args.samp}_secondReadGenomePosRPM.npz'
+	captureNpPathNeg = f'{rootDir}/npArrayDir/{args.samp}/{args.samp}_secondReadGenomeNegRPM.npz'
 
 	inputNpzArray = np.load(inputNpPath)
+	inputNpzArrayPos = np.load(inputNpPathPos)
+	inputNpzArrayNeg = np.load(inputNpPathNeg)
+
 	captureNpzArray = np.load(captureNpPath)
+	captureNpzArrayPos = np.load(captureNpPathPos)
+	captureNpzArrayNeg = np.load(captureNpPathNeg)
 
 	inputTotalReads= f'{rootDir}/npArrayDir/{inputSamp}/{inputSamp}_npReadsPerMillion.txt'
 	captureTotalReads= f'{rootDir}/npArrayDir/{args.samp}/{args.samp}_npReadsPerMillion.txt'
 
 	clap = clapEnrichment(
 		inputNpzArray=inputNpzArray,
+		inputNpzArrayPos=inputNpzArrayPos,
+		inputNpzArrayNeg=inputNpzArrayNeg,
 		captureNpzArray=captureNpzArray,
+		captureNpzArrayPos=captureNpzArrayPos,
+		captureNpzArrayNeg=captureNpzArrayNeg,
 		bed=bed,
 		outRootDir=clapEnrichDir,
 		binSize=args.binSize,
@@ -615,11 +805,11 @@ def main():
 		)
 
 
-	df = clap.chrom_enrichments_iterate_through_chroms()
-	clap.filter_enriched_peaks_chrom(df, 'chrom')
+	# df = clap.chrom_enrichments_iterate_through_chroms()
+	# clap.filter_enriched_peaks_chrom(df, 'chrom')
 
 	dfgene = clap.gene_enrichments_iterate_through_chroms()
-	clap.filter_enriched_peaks_chrom(dfgene, 'gene')
+	clap.filter_enriched_peaks_gene(dfgene, 'gene')
 
 	print('done', datetime.now())
 
